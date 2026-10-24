@@ -2,6 +2,11 @@
 
 HTMLファイル1つで動くシンプルなPDFエディタです。ブラウザで `index.html` を開くだけで使えます（pdf.js / pdf-lib をCDNから読み込むためネット接続が必要）。
 
+## 動作サンプル
+
+- [エディタを開く](https://motohasystem.github.io/simple-pdf-editor/)（PDFをドロップして使います）
+- [GETパラメータ差し込みのデモ](https://motohasystem.github.io/simple-pdf-editor/?pdf=sample.pdf&t=1%2C160%2C130%2C12%2C%E5%B1%B1%E7%94%B0+%E5%A4%AA%E9%83%8E&t=1%2C160%2C176%2C10%2C%E6%9D%B1%E4%BA%AC%E9%83%BD%E5%8D%83%E4%BB%A3%E7%94%B0%E5%8C%BA%E4%B8%B8%E3%81%AE%E5%86%851-1-1%5Cn%E3%82%B5%E3%83%B3%E3%83%97%E3%83%AB%E3%83%93%E3%83%AB+3F&t=1%2C160%2C230%2C12%2C2026%E5%B9%B410%E6%9C%8825%E6%97%A5&t=1%2C62%2C300%2C10%2C%E2%9C%93&img=1%2C460%2C350%2C60%2Csample-stamp.png)（`sample.pdf` に氏名・住所・日付・チェック・印影を差し込んだ状態で開きます）
+
 ## 機能
 
 - テキスト入力（複数行、ゴシック／明朝、サイズ・色指定）
