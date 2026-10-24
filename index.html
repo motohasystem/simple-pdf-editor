@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simple PDF Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP&family=Noto+Serif+JP&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  :root {
+    --bg: #e9eaee; --panel: #ffffff; --line: #d4d6dc; --text: #222; --muted: #6b7080;
+    --accent: #2f6fde; --accent-soft: #e3ecfc; --sel: #2f6fde;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+    color: var(--text); background: var(--bg); display: flex; flex-direction: column; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 6px 10px;
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; position: sticky; top: 0; z-index: 10; }
+  .grp { display: flex; align-items: center; gap: 4px; }
+  .grp + .grp { border-left: 1px solid var(--line); padding-left: 14px; }
+  button, select, input { font: inherit; }
+  button { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 4px 9px; cursor: pointer; min-height: 30px; }
+  button:hover { background: #f4f5f8; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.08); }
+  button.tool { min-width: 34px; }
+  button.tool.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: default; }
+  label { color: var(--muted); display: flex; align-items: center; gap: 4px; }
+  input[type=number] { width: 58px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 5px; }
+  input[type=color] { width: 30px; height: 26px; padding: 0 2px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+  select { padding: 3px 4px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+  #stamps { display: flex; gap: 4px; }
+  #stamps img { width: 30px; height: 30px; object-fit: contain; border: 1px solid var(--line); border-radius: 5px;
+    background: repeating-conic-gradient(#eee 0 25%, #fff 0 50%) 0 0/8px 8px; cursor: pointer; }
+  #stamps img.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  main { flex: 1; overflow: auto; padding: 20px 16px 60px; }
+  #pages { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .page { position: relative; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.18); flex: none; }
+  .page canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .layer { position: absolute; inset: 0; overflow: hidden; }
+  body[data-tool=text] .layer { cursor: text; }
+  body[data-tool^=mark] .layer, body[data-tool=stamp] .layer { cursor: crosshair; }
+  .item { position: absolute; cursor: move; user-select: none; touch-action: none; }
+  .item.text span { display: block; white-space: pre; line-height: 1.2; }
+  .item.image img { display: block; width: 100%; height: 100%; pointer-events: none; }
+  .item:hover { outline: 1px dashed rgba(47,111,222,.6); }
+  .item.selected { outline: 1.5px solid var(--sel); }
+  .handle { position: absolute; right: -6px; bottom: -6px; width: 11px; height: 11px; background: #fff;
+    border: 1.5px solid var(--sel); border-radius: 2px; cursor: nwse-resize; }
+  textarea.editor { position: absolute; margin: 0; padding: 0; border: 0; outline: 1.5px dashed var(--sel);
+    background: rgba(255,255,255,.85); resize: none; overflow: hidden; white-space: pre; line-height: 1.2; z-index: 5; }
+  #empty { max-width: 560px; margin: 8vh auto; background: var(--panel); border: 2px dashed var(--line);
+    border-radius: 12px; padding: 32px 28px; text-align: center; }
+  #empty h1 { font-size: 18px; margin: 0 0 8px; }
+  #empty p { color: var(--muted); margin: 6px 0; }
+  body.dragging #empty { border-color: var(--accent); background: var(--accent-soft); }
+  footer { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,.95); border-top: 1px solid var(--line);
+    padding: 4px 12px; color: var(--muted); font-size: 12px; display: flex; gap: 16px; font-variant-numeric: tabular-nums; }
+  #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); background: #333; color: #fff;
+    padding: 8px 14px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 30; }
+  #toast.show { opacity: .95; }
+  dialog { border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; max-width: min(720px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,.3); }
+  dialog h2 { font-size: 15px; margin: 0 0 10px; }
+  dialog textarea { width: 100%; min-height: 90px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  dialog code, dialog pre { font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #f4f5f8; border-radius: 4px; }
+  dialog code { padding: 1px 4px; }
+  dialog pre { padding: 8px 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  dialog table { border-collapse: collapse; margin: 6px 0; }
+  dialog td { border-top: 1px solid var(--line); padding: 4px 8px; vertical-align: top; }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body data-tool="select">
+<header>
+  <div class="grp">
+    <button id="btnOpen">PDFを開く</button>
+    <button id="btnSave" class="primary" disabled>PDFを保存</button>
+  </div>
+  <div class="grp" id="tools">
+    <button class="tool active" data-tool="select" title="選択・移動 (V)">選択</button>
+    <button class="tool" data-tool="text" title="テキスト (T)">テキスト</button>
+    <button class="tool" data-tool="mark:check" title="チェック">✓</button>
+    <button class="tool" data-tool="mark:cross" title="バツ">✗</button>
+    <button class="tool" data-tool="mark:circle" title="丸">○</button>
+    <button class="tool" data-tool="mark:dot" title="黒丸">●</button>
+    <button class="tool" data-tool="stamp" title="印影を配置">印影</button>
+  </div>
+  <div class="grp">
+    <label>文字 <input type="number" id="fontSize" value="12" min="4" max="200" step="0.5">pt</label>
+    <select id="fontFamily" title="書体"><option value="gothic">ゴシック</option><option value="mincho">明朝</option></select>
+    <label>記号 <input type="number" id="markSize" value="14" min="4" max="200" step="1">pt</label>
+    <label>色 <input type="color" id="color" value="#000000"></label>
+  </div>
+  <div class="grp">
+    <button id="btnAddStamp" title="透過PNGを読み込み">印影追加…</button>
+    <div id="stamps"></div>
+    <label>幅 <input type="number" id="stampWidth" value="15" min="3" max="200" step="0.5">mm</label>
+  </div>
+  <div class="grp">
+    <button id="btnUndo" title="元に戻す (Ctrl+Z)">↶</button>
+    <button id="btnDelete" title="選択を削除 (Delete)">削除</button>
+    <select id="zoom" title="表示倍率">
+      <option value="75">75%</option><option value="100" selected>100%</option><option value="125">125%</option>
+      <option value="150">150%</option><option value="200">200%</option>
+    </select>
+    <button id="btnUrl" title="現在のテキスト配置からGETパラメータ付きURLを作成">URL生成</button>
+    <button id="btnHelp">?</button>
+  </div>
+</header>
+
+<main id="main">
+  <div id="empty">
+    <h1>PDFをドロップ、または「PDFを開く」</h1>
+    <p>テキスト入力・チェックマーク・印影（透過PNG）の貼り付けができます。</p>
+    <p>URLのGETパラメータで文字を差し込めます（右上の「?」参照）。</p>
+  </div>
+  <div id="pages"></div>
+</main>
+
+<footer><span id="pos">—</span><span id="info"></span></footer>
+<div id="toast"></div>
+
+<input type="file" id="filePdf" accept="application/pdf,.pdf" hidden>
+<input type="file" id="fileStamp" accept="image/png,image/jpeg" multiple hidden>
+
+<dialog id="dlgUrl">
+  <h2>差し込み用URL</h2>
+  <p>現在のテキスト（位置・サイズ・内容）を <code>t</code> パラメータに書き出しました。色・書体は全体指定（<code>color</code> / <code>font</code>）のみ反映されます。</p>
+  <textarea id="urlOut" readonly></textarea>
+  <div class="dlg-actions"><button id="btnCopyUrl">コピー</button><button onclick="this.closest('dialog').close()">閉じる</button></div>
+</dialog>
+
+<dialog id="dlgHelp">
+  <h2>使い方</h2>
+  <p>ツールを選んでページをクリックすると配置します。配置済みの要素はドラッグで移動、右下の□で拡大縮小、ダブルクリックでテキスト再編集。
+     矢印キーで1pt（Shift併用で10pt）移動、Deleteで削除、Ctrl+Zで元に戻す。PNG画像はページ上にドロップしても配置できます。</p>
+  <h2>GETパラメータ</h2>
+  <p>座標の単位はpt（1mm ≒ 2.835pt）、原点は<b>ページ左上</b>、y は下向きです。画面下部に現在のカーソル座標が表示されます。</p>
+  <table>
+    <tr><td><code>t=頁,x,y,サイズ,文字列</code></td><td>テキストを挿入（複数指定可）。サイズ省略時は <code>size</code> の値。文字列中のカンマはそのまま使えます。<br>
+      エスケープ：<code>\n</code> 改行、<code>\t</code> タブ、<code>\\</code> バックスラッシュ</td></tr>
+    <tr><td><code>pdf=URL</code></td><td>起動時に読み込むPDF（同一オリジンまたはCORS許可が必要）</td></tr>
+    <tr><td><code>img=頁,x,y,幅,URL</code></td><td>画像（印影など）を挿入。幅はpt、高さは縦横比から自動</td></tr>
+    <tr><td><code>size</code> / <code>color</code> / <code>font</code></td><td>テキストの既定値（例：<code>size=10.5</code>、<code>color=cc0000</code>、<code>font=mincho</code>）</td></tr>
+  </table>
+  <p>例：</p>
+  <pre>index.html?pdf=form.pdf&amp;t=1,120,150,12,山田 太郎&amp;t=1,120,180,,東京都千代田区\n丸の内1-1-1</pre>
+  <p>値はURLエンコードを推奨します（特に <code>&amp;</code> <code>#</code> <code>+</code> <code>%</code> を含む場合）。「URL生成」で現在の配置からURLを作れます。</p>
+  <div class="dlg-actions"><button onclick="this.closest('dialog').close()">閉じる</button></div>
+</dialog>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const $ = s => document.querySelector(s);
+const PT_PER_MM = 72 / 25.4;
+const FONTS = {
+  gothic: '"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif',
+  mincho: '"Noto Serif JP","Hiragino Mincho ProN","Yu Mincho","MS Mincho",serif',
+};
+// 記号は 0..1 の正方形座標（y下向き）で定義し、画面表示とPDF出力の両方で使う
+const MARKS = {
+  check:  { lines: [[[.12, .55], [.40, .82], [.90, .18]]], w: .12 },
+  cross:  { lines: [[[.15, .15], [.85, .85]], [[.85, .15], [.15, .85]]], w: .12 },
+  circle: { circle: { r: .42, fill: false }, w: .08 },
+  dot:    { circle: { r: .32, fill: true } },
+};
+
+let pdfBytes = null, fileName = 'document.pdf';
+let pages = [];          // { p, vp1, el, canvas, layer, task }
+let items = [];          // 配置要素（座標はpt、ページ左上原点）
+let images = {};         // id -> { bytes, kind, url, ratio }
+let currentStamp = null;
+let tool = 'select', selectedId = null, editing = null;
+let scale = 96 / 72;     // CSS px per pt
+let hist = [];
+let seq = 0;
+const uid = () => 'i' + (++seq) + Date.now().toString(36);
+const getItem = id => items.find(it => it.id === id);
+const round = (v, d = 1) => Math.round(v * 10 ** d) / 10 ** d;
+
+function toast(msg, ms = 2400) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+function pushHistory() {
+  hist.push(JSON.stringify(items));
+  if (hist.length > 200) hist.shift();
+}
+function undo() {
+  if (editing) return;
+  const s = hist.pop();
+  if (s === undefined) return;
+  items = JSON.parse(s); selectedId = null; renderItems();
+}
+
+/* ---------- GETパラメータ ---------- */
+const Q = new URLSearchParams(location.search);
+
+function unescapeText(s) {
+  return s.replace(/\\(n|t|\\)/g, (_, c) => c === 'n' ? '\n' : c === 't' ? '\t' : '\\');
+}
+function escapeText(s) {
+  return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\t/g, '\\t');
+}
+// 先頭 n 個をカンマ区切りで取り出し、残りは（カンマを含めて）最後の要素にする
+function splitFields(v, n) {
+  const parts = v.split(',');
+  return [...parts.slice(0, n), parts.slice(n).join(',')];
+}
+const qDefaults = () => ({
+  size: parseFloat(Q.get('size')) || 12,
+  color: Q.get('color') ? '#' + Q.get('color').replace(/^#/, '') : '#000000',
+  font: Q.get('font') === 'mincho' ? 'mincho' : 'gothic',
+});
+
+async function itemsFromQuery() {
+  const out = [], d = qDefaults();
+  for (const v of Q.getAll('t')) {
+    const [pg, x, y, size, text] = splitFields(v, 4);
+    if (!text) continue;
+    out.push({ id: uid(), type: 'text', page: parseInt(pg) || 1, x: parseFloat(x) || 0, y: parseFloat(y) || 0,
+      size: parseFloat(size) || d.size, color: d.color, font: d.font, text: unescapeText(text) });
+  }
+  for (const v of Q.getAll('img')) {
+    const [pg, x, y, w, url] = splitFields(v, 4);
+    try {
+      const id = await imageFromUrl(url);
+      const width = parseFloat(w) || 15 * PT_PER_MM;
+      out.push({ id: uid(), type: 'image', page: parseInt(pg) || 1, x: parseFloat(x) || 0, y: parseFloat(y) || 0,
+        w: width, h: width * images[id].ratio, imgId: id });
+    } catch (e) { toast('画像を読み込めません: ' + url); }
+  }
+  return out.filter(it => it.page >= 1 && it.page <= pages.length);
+}
+
+/* ---------- 画像（印影） ---------- */
+function sniffImage(bytes) {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) return 'png';
+  if (bytes[0] === 0xFF && bytes[1] === 0xD8) return 'jpg';
+  return null;
+}
+async function addImage(buf) {
+  const bytes = new Uint8Array(buf);
+  const kind = sniffImage(bytes);
+  if (!kind) throw new Error('PNG/JPEGのみ対応しています');
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'image/' + (kind === 'png' ? 'png' : 'jpeg') }));
+  const img = new Image(); img.src = url; await img.decode();
+  const id = uid();
+  images[id] = { bytes, kind, url, ratio: img.naturalHeight / img.naturalWidth };
+  const th = document.createElement('img');
+  th.src = url; th.dataset.id = id; th.title = 'クリックで印影ツールに切替';
+  th.onclick = () => { setStamp(id); setTool('stamp'); };
+  $('#stamps').append(th);
+  return id;
+}
+const imageCache = {};
+function imageFromUrl(url) {
+  return imageCache[url] ??= fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(addImage);
+}
+function setStamp(id) {
+  currentStamp = id;
+  document.querySelectorAll('#stamps img').forEach(e => e.classList.toggle('active', e.dataset.id === id));
+}
+
+/* ---------- PDF読み込み・描画 ---------- */
+async function loadPdf(buf, name) {
+  let doc;
+  try {
+    pdfBytes = new Uint8Array(buf);
+    doc = await pdfjsLib.getDocument({ data: pdfBytes.slice() }).promise;
+  } catch (e) { toast('PDFを開けません: ' + e.message); return; }
+  fileName = name || 'document.pdf';
+  pages.forEach(pg => pg.task?.cancel());
+  pages = []; $('#pages').innerHTML = '';
+  for (let i = 1; i <= doc.numPages; i++) {
+    const p = await doc.getPage(i);
+    const el = document.createElement('div'); el.className = 'page';
+    const canvas = document.createElement('canvas');
+    const layer = document.createElement('div'); layer.className = 'layer';
+    el.append(canvas, layer); $('#pages').append(el);
+    pages.push({ p, vp1: p.getViewport({ scale: 1 }), el, canvas, layer, task: null });
+    bindLayer(layer, i);
+  }
+  $('#empty').classList.add('hidden');
+  $('#btnSave').disabled = false;
+  $('#info').textContent = `${fileName} ／ ${doc.numPages}ページ`;
+  hist = []; selectedId = null; editing = null;
+  items = await itemsFromQuery();
+  renderItems();
+  await renderPages();
+}
+
+async function renderPages() {
+  const dpr = window.devicePixelRatio || 1;
+  for (const pg of pages) {
+    pg.el.style.width = pg.vp1.width * scale + 'px';
+    pg.el.style.height = pg.vp1.height * scale + 'px';
+  }
+  for (const pg of pages) {
+    pg.task?.cancel();
+    const vp = pg.p.getViewport({ scale: scale * dpr });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+    pg.task = pg.p.render({ canvasContext: canvas.getContext('2d'), viewport: vp });
+    try { await pg.task.promise; } catch (e) { continue; } // 再描画でキャンセルされた場合
+    pg.canvas.replaceWith(canvas); pg.canvas = canvas;
+  }
+}
+
+/* ---------- 配置要素の表示 ---------- */
+function markSvg(kind, color) {
+  const m = MARKS[kind];
+  let s = '';
+  if (m.lines) s = m.lines.map(pl =>
+    `<polyline points="${pl.map(p => p[0] * 100 + ',' + p[1] * 100).join(' ')}" fill="none" stroke="${color}"
+      stroke-width="${m.w * 100}" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+  if (m.circle) s = `<circle cx="50" cy="50" r="${m.circle.r * 100}" ` +
+    (m.circle.fill ? `fill="${color}"/>` : `fill="none" stroke="${color}" stroke-width="${m.w * 100}"/>`);
+  return `<svg viewBox="0 0 100 100" width="100%" height="100%" style="display:block;overflow:visible">${s}</svg>`;
+}
+
+function buildItemEl(it) {
+  const el = document.createElement('div');
+  el.className = 'item ' + it.type; el.dataset.id = it.id;
+  el.style.left = it.x * scale + 'px'; el.style.top = it.y * scale + 'px';
+  if (it.type === 'text') {
+    const sp = document.createElement('span');
+    sp.textContent = it.text;
+    Object.assign(sp.style, { fontSize: it.size * scale + 'px', fontFamily: FONTS[it.font], color: it.color });
+    el.append(sp);
+  } else if (it.type === 'mark') {
+    el.style.width = el.style.height = it.size * scale + 'px';
+    el.innerHTML = markSvg(it.kind, it.color);
+  } else if (it.type === 'image') {
+    el.style.width = it.w * scale + 'px'; el.style.height = it.h * scale + 'px';
+    const img = document.createElement('img'); img.src = images[it.imgId].url; img.draggable = false;
+    el.append(img);
+  }
+  if (it.id === selectedId) {
+    el.classList.add('selected');
+    const h = document.createElement('div'); h.className = 'handle'; h.title = 'ドラッグで拡大縮小';
+    el.append(h);
+  }
+  if (editing === it) el.style.visibility = 'hidden';
+  return el;
+}
+
+function renderItems() {
+  for (const pg of pages) pg.layer.querySelectorAll('.item').forEach(e => e.remove());
+  for (const it of items) pages[it.page - 1]?.layer.append(buildItemEl(it));
+}
+const itemEl = it => pages[it.page - 1]?.layer.querySelector(`.item[data-id="${it.id}"]`);
+
+function select(id) {
+  selectedId = id;
+  renderItems();
+  const it = getItem(id);
+  if (!it) return;
+  if (it.type === 'text') { $('#fontSize').value = it.size; $('#fontFamily').value = it.font; $('#color').value = it.color; }
+  if (it.type === 'mark') { $('#markSize').value = it.size; $('#color').value = it.color; }
+  if (it.type === 'image') { $('#stampWidth').value = round(it.w / PT_PER_MM); setStamp(it.imgId); }
+}
+
+/* ---------- 操作 ---------- */
+function setTool(t) {
+  tool = t; document.body.dataset.tool = t;
+  document.querySelectorAll('#tools .tool').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+}
+
+function toPt(layer, e) {
+  const r = layer.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / scale, y: (e.clientY - r.top) / scale };
+}
+
+function bindLayer(layer, pageNo) {
+  layer.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.tagName === 'TEXTAREA') return;
+    commitEdit();
+    const el = e.target.closest('.item');
+    if (e.target.classList.contains('handle')) return startResize(e, getItem(el.dataset.id));
+    if (el) return startDrag(e, getItem(el.dataset.id));
+    const pt = toPt(layer, e);
+    if (tool === 'select') return select(null);
+    if (tool === 'text') {
+      pushHistory();
+      const it = { id: uid(), type: 'text', page: pageNo, x: pt.x, y: pt.y - (+$('#fontSize').value) * 0.6,
+        size: +$('#fontSize').value || 12, font: $('#fontFamily').value, color: $('#color').value, text: '' };
+      items.push(it); select(it.id); startEdit(it);
+    } else if (tool.startsWith('mark:')) {
+      pushHistory();
+      const size = +$('#markSize').value || 14;
+      const it = { id: uid(), type: 'mark', kind: tool.slice(5), page: pageNo, x: pt.x - size / 2, y: pt.y - size / 2,
+        size, color: $('#color').value };
+      items.push(it); select(it.id);
+    } else if (tool === 'stamp') {
+      if (!currentStamp) { $('#fileStamp').click(); return; }
+      placeImage(currentStamp, pageNo, pt);
+    }
+  });
+  // レイヤー上のクリックでフォーカスが移らないようにする（直後に開くテキスト入力欄を維持するため）
+  layer.addEventListener('mousedown', e => { if (e.target.tagName !== 'TEXTAREA') e.preventDefault(); });
+  layer.addEventListener('dblclick', e => {
+    const el = e.target.closest('.item.text');
+    if (el) { pushHistory(); startEdit(getItem(el.dataset.id)); }
+  });
+  layer.addEventListener('pointermove', e => {
+    const pt = toPt(layer, e);
+    $('#pos').textContent = `p.${pageNo}  x: ${round(pt.x)}  y: ${round(pt.y)} pt  (${round(pt.x / PT_PER_MM)}, ${round(pt.y / PT_PER_MM)} mm)`;
+  });
+  layer.addEventListener('dragover', e => e.preventDefault());
+  layer.addEventListener('drop', async e => {
+    const f = [...e.dataTransfer.files].find(f => /^image\/(png|jpeg)$/.test(f.type));
+    if (!f) return;
+    e.preventDefault(); e.stopPropagation();
+    try { const id = await addImage(await f.arrayBuffer()); setStamp(id); placeImage(id, pageNo, toPt(layer, e)); }
+    catch (err) { toast(err.message); }
+  });
+}
+
+function placeImage(imgId, pageNo, pt) {
+  pushHistory();
+  const w = (+$('#stampWidth').value || 15) * PT_PER_MM, h = w * images[imgId].ratio;
+  const it = { id: uid(), type: 'image', imgId, page: pageNo, x: pt.x - w / 2, y: pt.y - h / 2, w, h };
+  items.push(it); select(it.id);
+}
+
+function startDrag(e, it) {
+  e.preventDefault();
+  if (selectedId !== it.id) select(it.id);
+  const el = itemEl(it);
+  const sx = e.clientX, sy = e.clientY, ox = it.x, oy = it.y;
+  let moved = false;
+  const mv = ev => {
+    const dx = (ev.clientX - sx) / scale, dy = (ev.clientY - sy) / scale;
+    if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return;
+    if (!moved) { pushHistory(); moved = true; }
+    it.x = ox + dx; it.y = oy + dy;
+    el.style.left = it.x * scale + 'px'; el.style.top = it.y * scale + 'px';
+  };
+  const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+  addEventListener('pointermove', mv); addEventListener('pointerup', up);
+}
+
+function startResize(e, it) {
+  e.preventDefault(); e.stopPropagation();
+  pushHistory();
+  const startW = itemEl(it).offsetWidth, sx = e.clientX;
+  const s0 = it.type === 'image' ? it.w : it.size;
+  const mv = ev => {
+    const ratio = Math.max(0.1, (startW + ev.clientX - sx) / startW);
+    if (it.type === 'image') { it.w = s0 * ratio; it.h = it.w * images[it.imgId].ratio; }
+    else it.size = round(s0 * ratio);
+    renderItems();
+  };
+  const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); select(it.id); };
+  addEventListener('pointermove', mv); addEventListener('pointerup', up);
+}
+
+const measureCtx = document.createElement('canvas').getContext('2d');
+function startEdit(it) {
+  if (!it) return;
+  editing = it; renderItems();
+  const ta = document.createElement('textarea');
+  ta.className = 'editor'; ta.value = it.text; ta.spellcheck = false;
+  Object.assign(ta.style, { left: it.x * scale + 'px', top: it.y * scale + 'px', fontSize: it.size * scale + 'px',
+    fontFamily: FONTS[it.font], color: it.color });
+  const fit = () => {
+    measureCtx.font = `${it.size * scale}px ${FONTS[it.font]}`;
+    const w = Math.max(...ta.value.split('\n').map(l => measureCtx.measureText(l).width));
+    ta.style.width = Math.max(w + it.size * scale, 40) + 'px';
+    ta.style.height = '0'; ta.style.height = ta.scrollHeight + 'px';
+  };
+  ta.addEventListener('input', fit);
+  ta.addEventListener('blur', commitEdit);
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); commitEdit(); }
+  });
+  pages[it.page - 1].layer.append(ta);
+  fit();
+  ta.focus();
+}
+
+function commitEdit() {
+  if (!editing) return;
+  const it = editing; editing = null;
+  const ta = pages[it.page - 1]?.layer.querySelector('textarea.editor');
+  if (ta) { it.text = ta.value; ta.remove(); }
+  if (!it.text.trim()) { items = items.filter(x => x !== it); if (selectedId === it.id) selectedId = null; }
+  renderItems();
+}
+
+function deleteSelected() {
+  const it = getItem(selectedId);
+  if (!it) return;
+  pushHistory(); items = items.filter(x => x !== it); selectedId = null; renderItems();
+}
+
+function applyProps() {
+  const it = getItem(selectedId);
+  if (!it) return;
+  pushHistory();
+  if (it.type === 'text') { it.size = +$('#fontSize').value || it.size; it.font = $('#fontFamily').value; it.color = $('#color').value; }
+  if (it.type === 'mark') { it.size = +$('#markSize').value || it.size; it.color = $('#color').value; }
+  if (it.type === 'image') { it.w = (+$('#stampWidth').value || 15) * PT_PER_MM; it.h = it.w * images[it.imgId].ratio; }
+  renderItems();
+}
+
+/* ---------- 保存 ---------- */
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16) || 0;
+  return PDFLib.rgb((n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255);
+}
+
+// 日本語フォントを埋め込まずに済むよう、テキストは高解像度PNGにして貼り付ける
+async function textToPng(it) {
+  const k = 5; // 360dpi相当
+  const font = px => `${px}px ${FONTS[it.font]}`;
+  try { await document.fonts.load(font(it.size * k), it.text); } catch (e) {}
+  const lines = it.text.split('\n'), lh = it.size * 1.2;
+  const c = document.createElement('canvas'), ctx = c.getContext('2d');
+  ctx.font = font(it.size * k);
+  const w = Math.max(1, ...lines.map(l => ctx.measureText(l).width)) / k;
+  c.width = Math.ceil(w * k) + 2; c.height = Math.ceil(lines.length * lh * k);
+  ctx.font = font(it.size * k); ctx.fillStyle = it.color; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, 0, (i + 0.5) * lh * k));
+  return { dataUrl: c.toDataURL('image/png'), w: c.width / k, h: c.height / k };
+}
+
+async function savePdf() {
+  commitEdit();
+  if (!pdfBytes) return;
+  const btn = $('#btnSave'); btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const doc = await PDFLib.PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    const pdfPages = doc.getPages(), embedded = {};
+    for (const it of items) {
+      const page = pdfPages[it.page - 1], vp = pages[it.page - 1].vp1;
+      // 画面座標(pt, 左上原点) → PDF座標。トリミング枠や回転ページも pdf.js の変換に任せる
+      const P = (x, y) => { const [a, b] = vp.convertToPdfPoint(x, y); return { x: a, y: b }; };
+      const rotate = PDFLib.degrees(vp.rotation);
+      if (it.type === 'text') {
+        const r = await textToPng(it);
+        const img = await doc.embedPng(r.dataUrl);
+        page.drawImage(img, { ...P(it.x, it.y + r.h), width: r.w, height: r.h, rotate });
+      } else if (it.type === 'image') {
+        const im = images[it.imgId];
+        const img = embedded[it.imgId] ??= await (im.kind === 'png' ? doc.embedPng(im.bytes) : doc.embedJpg(im.bytes));
+        page.drawImage(img, { ...P(it.x, it.y + it.h), width: it.w, height: it.h, rotate });
+      } else if (it.type === 'mark') {
+        const m = MARKS[it.kind], s = it.size, color = hexToRgb(it.color);
+        const at = p => P(it.x + p[0] * s, it.y + p[1] * s);
+        for (const pl of m.lines || []) for (let i = 1; i < pl.length; i++)
+          page.drawLine({ start: at(pl[i - 1]), end: at(pl[i]), thickness: m.w * s, color, lineCap: PDFLib.LineCapStyle.Round });
+        if (m.circle) {
+          const c = at([.5, .5]), r = m.circle.r * s;
+          page.drawEllipse({ ...c, xScale: r, yScale: r, ...(m.circle.fill ? { color } : { borderColor: color, borderWidth: m.w * s }) });
+        }
+      }
+    }
+    const out = await doc.save();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([out], { type: 'application/pdf' }));
+    a.download = fileName.replace(/\.pdf$/i, '') + '_edited.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) {
+    console.error(e); toast('保存に失敗しました: ' + e.message, 5000);
+  } finally {
+    btn.disabled = false; btn.textContent = 'PDFを保存';
+  }
+}
+
+/* ---------- URL生成 ---------- */
+function buildUrl() {
+  commitEdit();
+  const u = new URL(location.href);
+  u.searchParams.delete('t');
+  for (const it of items.filter(i => i.type === 'text'))
+    u.searchParams.append('t', [it.page, round(it.x), round(it.y), it.size, escapeText(it.text)].join(','));
+  $('#urlOut').value = u.toString();
+  $('#dlgUrl').showModal();
+}
+
+/* ---------- イベント ---------- */
+$('#btnOpen').onclick = () => $('#filePdf').click();
+$('#filePdf').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f) loadPdf(await f.arrayBuffer(), f.name);
+};
+$('#btnAddStamp').onclick = () => $('#fileStamp').click();
+$('#fileStamp').onchange = async e => {
+  let last = null;
+  for (const f of e.target.files) { try { last = await addImage(await f.arrayBuffer()); } catch (err) { toast(err.message); } }
+  e.target.value = '';
+  if (last) { setStamp(last); setTool('stamp'); toast('ページをクリックして印影を配置'); }
+};
+$('#btnSave').onclick = savePdf;
+$('#btnUndo').onclick = undo;
+$('#btnDelete').onclick = deleteSelected;
+$('#btnUrl').onclick = buildUrl;
+$('#btnHelp').onclick = () => $('#dlgHelp').showModal();
+$('#btnCopyUrl').onclick = async () => {
+  try { await navigator.clipboard.writeText($('#urlOut').value); toast('コピーしました'); }
+  catch (e) { $('#urlOut').select(); document.execCommand('copy'); toast('コピーしました'); }
+};
+document.querySelectorAll('#tools .tool').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+['#fontSize', '#fontFamily', '#markSize', '#color', '#stampWidth'].forEach(s => $(s).addEventListener('change', applyProps));
+$('#zoom').onchange = () => { scale = +$('#zoom').value / 100 * 96 / 72; renderItems(); renderPages(); };
+
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, textarea, select') || document.querySelector('dialog[open]')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const it = getItem(selectedId);
+  if (e.key === 'v' || e.key === 'V') return setTool('select');
+  if (e.key === 't' || e.key === 'T') return setTool('text');
+  if (!it) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); return deleteSelected(); }
+  if (e.key === 'Enter' && it.type === 'text') { e.preventDefault(); pushHistory(); return startEdit(it); }
+  const d = e.shiftKey ? 10 : 1;
+  const mv = { ArrowLeft: [-d, 0], ArrowRight: [d, 0], ArrowUp: [0, -d], ArrowDown: [0, d] }[e.key];
+  if (mv) { e.preventDefault(); pushHistory(); it.x += mv[0]; it.y += mv[1]; renderItems(); }
+});
+
+// PDFはウィンドウ全体へのドロップで開く（画像はページ上のドロップで配置）
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+addEventListener('drop', async e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  const f = [...e.dataTransfer.files].find(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  if (f) loadPdf(await f.arrayBuffer(), f.name);
+  else if ([...e.dataTransfer.files].some(f => f.type.startsWith('image/'))) toast('画像はページの上にドロップしてください');
+});
+
+// 起動時：pdf パラメータがあれば読み込む
+(async () => {
+  const src = Q.get('pdf');
+  if (!src) return;
+  try {
+    const r = await fetch(src);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    await loadPdf(await r.arrayBuffer(), decodeURIComponent(src.split(/[?#]/)[0].split('/').pop()) || 'document.pdf');
+  } catch (e) { toast('PDFを取得できません: ' + e.message, 5000); }
+})();
+</script>
+</body>
+</html>
